@@ -1,1 +1,0 @@
-# pip3 install sentence-transformers --target ${ISC_PACKAGE_INSTALLDIR}/mgr/python
