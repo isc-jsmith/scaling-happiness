@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import requests
 from langchain_community.vectorstores import FAISS
 
 from .config import load_settings
@@ -38,9 +39,9 @@ def initialize_agent() -> FAISS:
 
 
 def run_cli():
-    print('Loading settings.')
+    print("Loading settings.")
     settings = load_settings()
-    print('Initialising agent.')
+    print("Initialising agent.")
     vector_store = initialize_agent()
     retriever = vector_store.as_retriever()
     rag_chain = build_rag_chain(retriever, settings["openai_api_key"])
@@ -92,6 +93,32 @@ def run_cli():
             print(response)
         except Exception as exc:
             print(f"An error occurred during data generation: {exc}")
+            continue
+
+        default_endpoint = settings.get("fhir_endpoint")
+        prompt = (
+            "\nOptional: enter a FHIR endpoint URL to POST this "
+            "bundle to (press Enter to "
+        )
+        if default_endpoint:
+            prompt += f"use default {default_endpoint!r} or "
+        prompt += "skip): "
+
+        endpoint_url = input(prompt).strip() or default_endpoint or ""
+        if endpoint_url:
+            try:
+                http_response = requests.post(
+                    endpoint_url,
+                    data=response,
+                    headers={"Content-Type": "application/fhir+json"},
+                    timeout=15,
+                )
+                print(
+                    f"POSTed bundle to {endpoint_url} "
+                    f"(status {http_response.status_code})."
+                )
+            except Exception as exc:
+                print(f"Failed to POST bundle to endpoint: {exc}")
 
 
 if __name__ == "__main__":

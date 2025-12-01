@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import requests
 from flask import Flask, jsonify, render_template_string, request
 
 from .config import load_settings
@@ -52,6 +53,14 @@ _HTML_TEMPLATE = """
     <form method="post" action="/generate">
       <label for="query"><strong>Your prompt</strong></label><br />
       <textarea id="query" name="query" required></textarea><br /><br />
+
+      <label for="endpoint_url"><strong>FHIR endpoint URL (optional)</strong></label><br />
+      <input id="endpoint_url" name="endpoint_url" style="width: 100%;" placeholder="https://example.com/fhir" value="{{ default_endpoint or '' }}" />
+      <p class="meta">
+        If provided, the generated bundle will be POSTed as
+        <code>application/fhir+json</code> to this endpoint.
+      </p>
+
       <button type="submit">Generate Clinical Data</button>
     </form>
 
@@ -60,6 +69,11 @@ _HTML_TEMPLATE = """
       <div class="meta">
         Web tools used: {{ tools|join(", ") if tools else "none" }}
       </div>
+      {% if post_status %}
+        <div class="meta">
+          FHIR POST: {{ post_status }}
+        </div>
+      {% endif %}
       <h2>Generated Clinical Data</h2>
       <pre>{{ response }}</pre>
     {% endif %}
@@ -103,16 +117,36 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return render_template_string(_HTML_TEMPLATE)
+        return render_template_string(
+            _HTML_TEMPLATE,
+            response=None,
+            tools=[],
+            post_status=None,
+            default_endpoint=settings.get("fhir_endpoint"),
+        )
 
     @app.post("/generate")
     def generate():
-        query = request.form.get("query") or request.json.get("query")  # type: ignore[union-attr]
+        json_body = None
+        if request.is_json:
+            json_body = request.get_json(silent=True) or {}
+
+        query = request.form.get("query") if not json_body else json_body.get("query")
+        endpoint_url = (
+            request.form.get("endpoint_url")
+            if not json_body
+            else json_body.get("endpoint_url")
+        )
+
         if not query:
-            if request.content_type and "application/json" in request.content_type:
+            if request.is_json:
                 return jsonify({"error": "Missing 'query'"}), 400
             return render_template_string(
-                _HTML_TEMPLATE, response=None, tools=[]
+                _HTML_TEMPLATE,
+                response=None,
+                tools=[],
+                post_status=None,
+                default_endpoint=settings.get("fhir_endpoint"),
             )
 
         rag = app.config["RAG_CHAIN"]
@@ -138,27 +172,52 @@ def create_app() -> Flask:
                 f"{web_context}"
             )
 
+        post_status: str | None = None
+
         try:
             response = rag.invoke(augmented_query)
         except Exception as exc:  # pragma: no cover - simple error surface
-            if request.content_type and "application/json" in request.content_type:
+            if request.is_json:
                 return jsonify({"error": str(exc)}), 500
             return render_template_string(
                 _HTML_TEMPLATE,
                 response=f"Error during generation: {exc}",
                 tools=tool_names,
+                post_status=None,
+                default_endpoint=settings.get("fhir_endpoint"),
             )
 
-        if request.content_type and "application/json" in request.content_type:
+        if endpoint_url:
+            try:
+                http_response = requests.post(
+                    endpoint_url,
+                    data=response,
+                    headers={"Content-Type": "application/fhir+json"},
+                    timeout=15,
+                )
+                post_status = (
+                    f"POSTed bundle to {endpoint_url} "
+                    f"(status {http_response.status_code})."
+                )
+            except Exception as exc:
+                post_status = f"Failed to POST bundle to {endpoint_url}: {exc}"
+
+        if request.is_json:
             return jsonify(
                 {
                     "response": response,
                     "tools_used": tool_names,
+                    "endpoint_url": endpoint_url,
+                    "post_status": post_status,
                 }
             )
 
         return render_template_string(
-            _HTML_TEMPLATE, response=response, tools=tool_names
+            _HTML_TEMPLATE,
+            response=response,
+            tools=tool_names,
+            post_status=post_status,
+            default_endpoint=settings.get("fhir_endpoint"),
         )
 
     return app
@@ -171,4 +230,3 @@ def run_web(host: str = "127.0.0.1", port: int = 5000):
 
 if __name__ == "__main__":
     run_web()
-

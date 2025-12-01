@@ -25,8 +25,11 @@ def load_settings(env_path: str | None = None) -> dict:
             "Add it to your .env file in the project root."
         )
 
+    fhir_endpoint = os.environ.get("FHIR_ENDPOINT")
+
     return {
         "openai_api_key": openai_api_key,
         "project_root": str(Path(__file__).resolve().parents[1]),
+        "fhir_endpoint": fhir_endpoint,
     }
 
