@@ -5,12 +5,17 @@ __pycache__/
 backup/
 fhir*/
 content/
+irisdata/*
+example_data/
+mgr/*
+hfcache/*
+*.tgz
+*.json
 # C extensions
 *.so
-
+iris*.key
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
