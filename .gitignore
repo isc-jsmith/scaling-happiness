@@ -4,12 +4,10 @@ __pycache__/
 *$py.class
 backup/
 fhir*/
-content/
 irisdata/*
 example_data/
 mgr/*
 hfcache/*
-*.tgz
 *.json
 # C extensions
 *.so
