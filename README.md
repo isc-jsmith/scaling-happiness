@@ -23,6 +23,8 @@ pip install -r requirements.txt
 ```bash
 OPENAI_API_KEY=your-openai-api-key
 FHIR_ENDPOINT=https://your-fhir-endpoint.example.com  # optional default
+FHIR_AUTH_USER=<FHIR Server HTTP User> # optional if server supports unauthenticated access
+FHIR_AUTH_PASSWORD=<FHIR Server HTTP Password>
 ```
 
 ## Running the CLI

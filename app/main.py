@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+from requests.auth import HTTPBasicAuth
+from pygments import highlight
+from pygments.lexers import JsonLexer
+from pygments.formatters import Terminal256Formatter
 
 import requests
 from langchain_community.vectorstores import FAISS
@@ -17,8 +22,10 @@ from .tools import create_web_tools
 from .vector_store import build_vector_store
 
 
-def initialize_agent() -> FAISS:
-    settings = load_settings()
+def initialize_agent(settings:dict) -> FAISS:
+    if not settings:
+       settings = load_settings()
+       
     root = Path(settings["project_root"])
     content_dir = root / "content"
 
@@ -42,7 +49,7 @@ def run_cli():
     print("Loading settings.")
     settings = load_settings()
     print("Initialising agent.")
-    vector_store = initialize_agent()
+    vector_store = initialize_agent(settings=settings)
     retriever = vector_store.as_retriever()
     rag_chain = build_rag_chain(retriever, settings["openai_api_key"])
 
@@ -89,8 +96,65 @@ def run_cli():
 
         try:
             response = rag_chain.invoke(augmented_query)
-            print("\n--- Generated Clinical Data ---")
-            print(response)
+
+            # Attempt to parse structured JSON response separating natural language
+            # content from the FHIR bundle. Be tolerant of markdown code fences.
+            parsed = None
+            raw_text = response.strip()
+
+            try:
+                parsed = json.loads(raw_text)
+            except Exception:
+                if raw_text.startswith("```"):
+                    lines = raw_text.splitlines()
+                    # Drop first fence line (e.g. ``` or ```json)
+                    lines = lines[1:]
+                    # Drop trailing fence line(s)
+                    while lines and lines[-1].strip().startswith("```"):
+                        lines = lines[:-1]
+                    cleaned = "\n".join(lines).strip()
+                    try:
+                        parsed = json.loads(cleaned)
+                    except Exception:
+                        parsed = None
+                else:
+                    parsed = None
+
+            fhir_bundle = None
+            natural_language = None
+            fhir_payload = None
+
+            if isinstance(parsed, dict) and "fhir_bundle" in parsed:
+                fhir_bundle = parsed.get("fhir_bundle")
+                natural_language = parsed.get("natural_language") or ""
+
+                # Prepare payload to POST (pure FHIR bundle only)
+                if isinstance(fhir_bundle, (dict, list)):
+                    fhir_payload = json.dumps(fhir_bundle)
+                    pretty_fhir = json.dumps(fhir_bundle, indent=2)
+                else:
+                    fhir_payload = fhir_bundle
+                    try:
+                        pretty_fhir = json.dumps(json.loads(fhir_bundle), indent=2)
+                    except Exception:
+                        pretty_fhir = str(fhir_bundle)
+
+                print("\n--- Natural Language Summary ---")
+                if natural_language:
+                    print(natural_language)
+                else:
+                    print("(none)")
+
+                print("\n--- FHIR Bundle ---")
+                try:
+                    print(highlight(code=pretty_fhir,lexer=JsonLexer(),formatter=Terminal256Formatter()))
+                except Exception as ex:
+                    print(pretty_fhir)
+            else:
+                # Fall back to original raw response if not structured
+                print("\n--- Generated Clinical Data (raw) ---")
+                print(response)
+
         except Exception as exc:
             print(f"An error occurred during data generation: {exc}")
             continue
@@ -107,11 +171,17 @@ def run_cli():
         endpoint_url = input(prompt).strip() or default_endpoint or ""
         if endpoint_url:
             try:
+                # If we successfully parsed a FHIR bundle above, prefer that for POST.
+                payload_to_send = fhir_payload if 'fhir_payload' in locals() and fhir_payload else response
+                fhir_username = settings.get('fhir_auth_user')
+                fhir_password = settings.get('fhir_auth_passwd')
+
                 http_response = requests.post(
-                    endpoint_url,
-                    data=response,
+                    url=endpoint_url,
+                    data=payload_to_send,
                     headers={"Content-Type": "application/fhir+json"},
                     timeout=15,
+                    auth=HTTPBasicAuth(username=fhir_username, password=fhir_password),
                 )
                 print(
                     f"POSTed bundle to {endpoint_url} "
