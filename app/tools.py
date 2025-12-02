@@ -6,7 +6,7 @@ from langchain_community.utilities import (
     WikipediaAPIWrapper,
 )
 from langchain_core.tools import Tool
-
+# import custom_tools
 
 def create_web_tools():
     """
@@ -38,10 +38,12 @@ def create_web_tools():
         ),
     )
 
+    
     return {
         "duckduckgo": duckduckgo_search,
         "wikipedia": wikipedia_search,
         "pubmed": pubmed_search,
-        "arxiv": arxiv_search,
+        "arxiv": arxiv_search
+        
     }
 
