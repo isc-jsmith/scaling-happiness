@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import json
 from requests.auth import HTTPBasicAuth
+from pygments import highlight
+from pygments.lexers import JsonLexer
+from pygments.formatters import Terminal256Formatter
 
 import requests
 from langchain_community.vectorstores import FAISS
@@ -143,7 +146,10 @@ def run_cli():
                     print("(none)")
 
                 print("\n--- FHIR Bundle ---")
-                print(pretty_fhir)
+                try:
+                    print(highlight(code=pretty_fhir,lexer=JsonLexer(),formatter=Terminal256Formatter()))
+                except Exception as ex:
+                    print(pretty_fhir)
             else:
                 # Fall back to original raw response if not structured
                 print("\n--- Generated Clinical Data (raw) ---")
