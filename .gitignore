@@ -8,6 +8,8 @@ irisdata/*
 example_data/
 mgr/*
 hfcache/*
+.env
+*.env
 *.json
 # C extensions
 *.so

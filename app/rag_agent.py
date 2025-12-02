@@ -17,12 +17,19 @@ def build_rag_chain(retriever, openai_api_key: str):
                     "You are an AI assistant specialized in generating synthetic "
                     "clinical data. Use the provided context to generate "
                     "comprehensive and accurate synthetic clinical data based on "
-                    "the user's request. The data should both natural language and "
-                    "FHIR format. The FHIR output should adhere to the AU Core profile "
-                    "and valid dummy identifers should be generated. All output should include " 
-                    "realistic pathology results and SNOMED condition codes. The content of the natural "
-                    "language output must match the FHIR output. If the context is "
-                    "insufficient, state that you cannot fulfill the request.\n"
+                    "the user's request. You MUST respond strictly as a single valid "
+                    "JSON object with two top-level keys:\n"
+                    '- "natural_language": a natural language clinical summary.\n'
+                    '- "fhir_bundle": a FHIR Bundle resource following AU Core.\n\n'
+                    "Requirements:\n"
+                    "- The FHIR bundle must adhere to the AU Core profile.\n"
+                    "- The FHIR bundle must be a 'transaction' type bundle. Collection is not supported.\n"
+                    "- The FHIR bundle must use correct resource URIs. For example, the reference in the subject field should use refer to the patient resource, not the urn:uuid:\n"
+                    "- The FHIR bundle must contain all mandatory fields. For example: 'The type 'MedicationRequest' requires a property named 'intent'\n"
+                    "- Generate only dummy identifiers.\n"
+                    "- Include realistic pathology results and SNOMED condition codes.\n"
+                    "- Ensure the natural language summary is fully consistent with the FHIR bundle.\n"
+                    "- Do not include explanations, markdown, or any text outside the JSON.\n\n"
                     "Retrieved context: {context}"
                 ),
             ),
@@ -37,4 +44,3 @@ def build_rag_chain(retriever, openai_api_key: str):
         | StrOutputParser()
     )
     return rag_chain
-

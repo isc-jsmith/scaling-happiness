@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import requests
+from requests.auth import HTTPBasicAuth
 from flask import Flask, jsonify, render_template_string, request
 
 from .config import load_settings
@@ -439,7 +441,8 @@ def create_app() -> Flask:
     app.config["APP_SETTINGS"] = settings
     app.config["RAG_CHAIN"] = rag_chain
     app.config["WEB_TOOLS"] = web_tools
-
+    app.config['FHIR_USER'] = settings.get('fhir_auth_user')
+    app.config['FHIR_PASS'] = settings.get('fhir_auth_passwd')
     @app.get("/")
     def index():
         return render_template_string(
@@ -449,7 +452,6 @@ def create_app() -> Flask:
             post_status=None,
             default_endpoint=settings.get("fhir_endpoint"),
         )
-
     @app.post("/generate")
     def generate():
         json_body = None
@@ -498,9 +500,68 @@ def create_app() -> Flask:
             )
 
         post_status: str | None = None
+        natural_language: str | None = None
+        fhir_bundle = None
 
         try:
             response = rag.invoke(augmented_query)
+            # Attempt to parse structured JSON response separating natural language
+            # content from the FHIR bundle. Be tolerant of markdown code fences.
+            parsed = None
+
+            raw_text = response.strip()
+
+            # First attempt: direct JSON parse
+            try:
+                parsed = json.loads(raw_text)
+            except Exception:
+                # Second attempt: strip ``` or ```json fences if present
+                if raw_text.startswith("```"):
+                    lines = raw_text.splitlines()
+                    # Drop first fence line
+                    lines = lines[1:]
+                    # Drop trailing fence line(s)
+                    while lines and lines[-1].strip().startswith("```"):
+                        lines = lines[:-1]
+                    cleaned = "\n".join(lines).strip()
+                    try:
+                        parsed = json.loads(cleaned)
+                    except Exception:
+                        parsed = None
+                else:
+                    parsed = None
+
+            fhir_payload = None
+            display_response = response
+
+            if isinstance(parsed, dict) and "fhir_bundle" in parsed:
+                fhir_bundle = parsed.get("fhir_bundle")
+                natural_language = (parsed.get("natural_language") or "") if parsed.get("natural_language") is not None else None
+
+                # Prepare payload to POST (pure FHIR bundle only)
+                if isinstance(fhir_bundle, (dict, list)):
+                    fhir_payload = json.dumps(fhir_bundle)
+                    pretty_fhir = json.dumps(fhir_bundle, indent=2)
+                else:
+                    # Assume already a JSON string
+                    fhir_payload = fhir_bundle
+                    try:
+                        pretty_fhir = json.dumps(json.loads(fhir_bundle), indent=2)
+                    except Exception:
+                        pretty_fhir = str(fhir_bundle)
+
+                # What we show in the UI / API
+                if natural_language:
+                    display_response = (
+                        f"{natural_language}\n\n---\n\nFHIR Bundle:\n{pretty_fhir}"
+                    )
+                else:
+                    display_response = pretty_fhir
+            else:
+                # Fall back to original raw response if not structured
+                fhir_payload = None
+                display_response = response
+
         except Exception as exc:  # pragma: no cover - simple error surface
             if request.is_json:
                 return jsonify({"error": str(exc)}), 500
@@ -512,13 +573,16 @@ def create_app() -> Flask:
                 default_endpoint=settings.get("fhir_endpoint"),
             )
 
-        if endpoint_url:
+        if endpoint_url and fhir_payload:
             try:
+                fhir_username = settings.get('fhir_auth_user')
+                fhir_password = settings.get('fhir_auth_passwd')
                 http_response = requests.post(
                     endpoint_url,
-                    data=response,
+                    data=fhir_payload,
                     headers={"Content-Type": "application/fhir+json"},
                     timeout=15,
+                    auth=HTTPBasicAuth(username=fhir_username, password=fhir_password)
                 )
                 post_status = (
                     f"POSTed bundle to {endpoint_url} "
@@ -526,11 +590,15 @@ def create_app() -> Flask:
                 )
             except Exception as exc:
                 post_status = f"Failed to POST bundle to {endpoint_url}: {exc}"
+        elif endpoint_url and not fhir_payload:
+            post_status = "No FHIR bundle detected in model response; nothing POSTed."
 
         if request.is_json:
             return jsonify(
                 {
-                    "response": response,
+                    "response": display_response,
+                    "natural_language": natural_language,
+                    "fhir_bundle": fhir_bundle,
                     "tools_used": tool_names,
                     "endpoint_url": endpoint_url,
                     "post_status": post_status,
@@ -539,7 +607,7 @@ def create_app() -> Flask:
 
         return render_template_string(
             _HTML_TEMPLATE,
-            response=response,
+            response=display_response,
             tools=tool_names,
             post_status=post_status,
             default_endpoint=settings.get("fhir_endpoint"),
@@ -548,7 +616,7 @@ def create_app() -> Flask:
     return app
 
 
-def run_web(host: str = "127.0.0.1", port: int = 5000):
+def run_web(host: str = "127.0.0.1", port: int = 51080):
     app = create_app()
     app.run(host=host, port=port)
 
